@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Scrapely extracts useful structured data from public webpages.">
+<title>Scrapely — Web Data Extractor</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar"><a class="brand" href="#"><span class="logo">S</span> Scrapely</a>
+<nav><a href="#results">Results</a><button id="theme" class="icon">☾</button></nav></header>
+<main>
+<section class="hero"><div class="hero-inner"><p class="eyebrow">WEB DATA EXTRACTION</p>
+<h1>Turn webpages into <span>usable data.</span></h1>
+<p class="sub">Paste a public webpage URL and extract its title, headings, links, images and metadata into a clean, searchable result.</p>
+<form id="extractForm"><input id="url" type="url" placeholder="https://example.com/page" required><button class="primary">Extract data</button></form>
+<p id="status" class="status"></p></div></section>
+<section class="container" id="results">
+<div class="toolbar"><div><p class="eyebrow">EXTRACTED DATA</p><h2 id="resultTitle">No page loaded</h2></div>
+<div class="toolbar-actions"><button id="csv" class="secondary" disabled>Export CSV</button><button id="json" class="secondary" disabled>Export JSON</button></div></div>
+<div id="empty" class="empty"><div class="empty-icon">⌁</div><h3>Ready when you are</h3><p>Enter a public URL above. Scrapely will organize useful page content into separate sections.</p></div>
+<div id="data" hidden><div class="stats">
+<article><span>Headings</span><strong id="headingCount">0</strong></article><article><span>Links</span><strong id="linkCount">0</strong></article>
+<article><span>Images</span><strong id="imageCount">0</strong></article><article><span>Metadata</span><strong id="metaCount">0</strong></article></div>
+<div class="search-row"><input id="search" type="search" placeholder="Filter extracted content..."></div>
+<div class="result-grid">
+<section class="panel"><h3>Page information</h3><div id="pageInfo"></div></section>
+<section class="panel"><h3>Headings</h3><div id="headings"></div></section>
+<section class="panel wide"><h3>Links</h3><div id="links"></div></section>
+<section class="panel wide"><h3>Images</h3><div id="images"></div></section>
+<section class="panel wide"><h3>Metadata</h3><div id="metadata"></div></section>
+</div></div></section>
+</main>
+<footer><span>© 2026 Scrapely</span><span>Responsible extraction of public webpages.</span></footer>
+<div id="toast" class="toast"></div><script src="app.js"></script>
+</body></html>
