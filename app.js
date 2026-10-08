@@ -1,12 +1,245 @@
-const state={data:null,query:""};const $=id=>document.getElementById(id);
-function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
-function status(t,e=false){$("status").textContent=t;$("status").style.color=e?"var(--danger)":"var(--muted)"}
-$("extractForm").onsubmit=async e=>{e.preventDefault();const url=$("url").value.trim();if(!/^https?:\/\//i.test(url)){status("Enter a complete http:// or https:// URL.",true);return}status("Extracting page data…");const btn=$("extractForm").querySelector("button");btn.disabled=true;try{const r=await fetch("/api/extract?url="+encodeURIComponent(url));const d=await r.json();if(!r.ok)throw Error(d.detail||"Extraction failed.");state.data=d;state.query="";$("search").value="";render(d);status(`Extracted ${d.summary.headings+d.summary.links+d.summary.images} items.`);$("results").scrollIntoView({behavior:"smooth"})}catch(err){status(err.message||"Extraction failed.",true)}finally{btn.disabled=false}};
-function render(d){$("empty").hidden=true;$("data").hidden=false;$("resultTitle").textContent=d.title||"Untitled page";$("headingCount").textContent=d.summary.headings;$("linkCount").textContent=d.summary.links;$("imageCount").textContent=d.summary.images;$("metaCount").textContent=d.summary.metadata;$("json").disabled=false;$("csv").disabled=false;renderAll()}
-function renderAll(){const d=state.data;if(!d)return;const q=state.query.toLowerCase();$("pageInfo").innerHTML=`<div class="info-row"><span>URL</span><a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.url)}</a></div><div class="info-row"><span>Title</span><span>${esc(d.title||"—")}</span></div><div class="info-row"><span>Description</span><span>${esc(d.description||"—")}</span></div>`;const h=d.headings.filter(x=>x.text.toLowerCase().includes(q));const l=d.links.filter(x=>(x.text+" "+x.url).toLowerCase().includes(q));const im=d.images.filter(x=>(x.alt+" "+x.url).toLowerCase().includes(q));const m=d.metadata.filter(x=>(x.name+" "+x.content).toLowerCase().includes(q));$("headings").innerHTML=box(h.map(x=>`<div class="item"><strong>${esc(x.level.toUpperCase())}</strong> ${esc(x.text)}</div>`));$("links").innerHTML=box(l.map(x=>`<div class="item"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.text)}</a><span class="muted">${esc(x.url)}</span></div>`));$("images").innerHTML=box(im.map(x=>`<div class="image-item"><img src="${esc(x.url)}" alt="" loading="lazy" onerror="this.style.display='none'"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.alt||x.url)}</a></div>`));$("metadata").innerHTML=box(m.map(x=>`<div class="item"><strong>${esc(x.name)}</strong><span class="muted">${esc(x.content)}</span></div>`))}
-function box(a){return a.length?`<div class="scrollbox">${a.join("")}</div>`:'<p class="empty-small">No matching data.</p>'}
-$("search").oninput=e=>{state.query=e.target.value;renderAll()};
-function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}
-$("json").onclick=()=>download("scrapely-data.json",JSON.stringify(state.data,null,2),"application/json");
-$("csv").onclick=()=>{const d=state.data,r=[["type","name","value"],["page","title",d.title],...d.headings.map(x=>["heading",x.level,x.text]),...d.links.map(x=>["link",x.text,x.url]),...d.images.map(x=>["image",x.alt,x.url]),...d.metadata.map(x=>["metadata",x.name,x.content])];download("scrapely-data.csv",r.map(row=>row.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n"),"text/csv")};
-$("theme").onclick=()=>{document.body.classList.toggle("dark");const d=document.body.classList.contains("dark");localStorage.setItem("scrapely_theme",d?"dark":"light");$("theme").textContent=d?"☀":"☾"};if(localStorage.getItem("scrapely_theme")==="dark"){document.body.classList.add("dark");$("theme").textContent="☀"}
+const state = { data: null, query: "" };
+const $ = (id) => document.getElementById(id);
+
+const CACHE_KEY = "scrapely_theme";
+const PLACEHOLDER = "—";
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c])
+  );
+}
+
+function status(message, isError = false) {
+  const el = $("status");
+  el.textContent = message;
+  el.style.color = isError ? "var(--danger)" : "var(--muted)";
+}
+
+function setBusy(busy) {
+  const button = $("extractForm").querySelector("button");
+  button.disabled = busy;
+  button.textContent = busy ? "Extracting…" : "Extract data";
+}
+
+async function extract() {
+  const url = $("url").value.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    status("Enter a complete http:// or https:// URL.", true);
+    return;
+  }
+
+  status("Extracting page data…");
+  setBusy(true);
+
+  try {
+    const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload.detail || `Extraction failed (HTTP ${response.status}).`);
+    }
+
+    state.data = payload;
+    state.query = "";
+    $("search").value = "";
+    render(payload);
+
+    const total = Object.entries(payload.summary || {})
+      .filter(([key]) => key !== "characters")
+      .reduce((sum, [, value]) => sum + value, 0);
+
+    status(`Extracted ${total} items.`);
+    $("results").scrollIntoView({ behavior: "smooth" });
+  } catch (error) {
+    status(error.message || "Extraction failed.", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function render(data) {
+  $("empty").hidden = true;
+  $("data").hidden = false;
+  $("resultTitle").textContent = data.title || "Untitled page";
+
+  const summary = data.summary || {};
+  $("headingCount").textContent = summary.headings ?? 0;
+  $("linkCount").textContent = summary.links ?? 0;
+  $("imageCount").textContent = summary.images ?? 0;
+  $("metaCount").textContent = summary.metadata ?? 0;
+  $("tableCount").textContent = summary.tables ?? 0;
+  $("jsonLdCount").textContent = summary.jsonLd ?? 0;
+  $("emailCount").textContent = summary.emails ?? 0;
+  $("charCount").textContent = summary.characters ?? 0;
+
+  $("json").disabled = false;
+  $("csv").disabled = false;
+  renderAll();
+}
+
+function matches(...values) {
+  return values.join(" ").toLowerCase().includes(state.query);
+}
+
+function infoRow(label, value) {
+  return `<div class="info-row"><span>${esc(label)}</span><span>${value || esc(PLACEHOLDER)}</span></div>`;
+}
+
+function box(items) {
+  return items.length
+    ? `<div class="scrollbox">${items.join("")}</div>`
+    : '<p class="empty-small">No matching data.</p>';
+}
+
+function renderAll() {
+  const data = state.data;
+  if (!data) return;
+
+  $("pageInfo").innerHTML =
+    infoRow("URL", `<a href="${esc(data.url)}" target="_blank" rel="noopener noreferrer">${esc(data.url)}</a>`) +
+    infoRow("Title", esc(data.title)) +
+    infoRow("Description", esc(data.description)) +
+    infoRow("Canonical", esc(data.canonical)) +
+    infoRow("Language", esc(data.language)) +
+    infoRow("Author", esc(data.author)) +
+    infoRow("Extracted at", esc(data.fetchedAt));
+
+  $("headings").innerHTML = box(
+    (data.headings || [])
+      .filter((h) => matches(h.text, h.level))
+      .map((h) => `<div class="item"><strong>${esc(h.level.toUpperCase())}</strong> ${esc(h.text)}</div>`)
+  );
+
+  $("links").innerHTML = box(
+    (data.links || [])
+      .filter((l) => matches(l.text, l.url))
+      .map(
+        (l) =>
+          `<div class="item"><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(
+            l.text
+          )}</a><span class="muted">${esc(l.url)}</span></div>`
+      )
+  );
+
+  $("images").innerHTML = box(
+    (data.images || [])
+      .filter((i) => matches(i.alt, i.url))
+      .map(
+        (i) =>
+          `<div class="image-item"><img src="${esc(i.url)}" alt="" loading="lazy" onerror="this.style.display='none'">` +
+          `<a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">${esc(i.alt || i.url)}</a></div>`
+      )
+  );
+
+  $("tables").innerHTML = box(
+    (data.tables || [])
+      .filter((t) => matches(...t.headers, ...t.rows.flat()))
+      .map((table, index) => {
+        const head = `<tr>${table.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>`;
+        const body = table.rows
+          .map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}</tr>`)
+          .join("");
+        return `<div class="item"><strong>Table ${index + 1}</strong> (${
+          table.rows.length
+        } rows)<table class="data-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+      })
+  );
+
+  $("metadata").innerHTML = box(
+    (data.metadata || [])
+      .filter((m) => matches(m.name, m.content))
+      .map((m) => `<div class="item"><strong>${esc(m.name)}</strong><span class="muted">${esc(m.content)}</span></div>`)
+  );
+
+  $("jsonLd").innerHTML = box(
+    (data.jsonLd || [])
+      .filter((item) => matches(JSON.stringify(item)))
+      .map(
+        (item) =>
+          `<div class="item"><strong>${esc(item["@type"] || item["@context"] || "structured data")}</strong>` +
+          `<pre class="code">${esc(JSON.stringify(item, null, 2))}</pre></div>`
+      )
+  );
+
+  const text = data.text || "";
+  $("pageText").innerHTML = matches(text)
+    ? `<div class="scrollbox"><p class="prose">${esc(text)}</p></div>`
+    : '<p class="empty-small">No matching data.</p>';
+
+  if (state.query) {
+    const emailBox = (data.emails || []).filter((e) => matches(e));
+    if (emailBox.length) {
+      $("pageText").innerHTML =
+        `<div class="item"><strong>Emails</strong><span class="muted">${emailBox
+          .map((e) => esc(e))
+          .join(", ")}</span></div>` + $("pageText").innerHTML;
+    }
+  }
+}
+
+function download(filename, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function toCsv(data) {
+  const rows = [["type", "name", "value"]];
+
+  rows.push(["page", "url", data.url], ["page", "title", data.title], ["page", "description", data.description]);
+  rows.push(["page", "canonical", data.canonical], ["page", "language", data.language], ["page", "author", data.author]);
+
+  (data.headings || []).forEach((h) => rows.push(["heading", h.level, h.text]));
+  (data.links || []).forEach((l) => rows.push(["link", l.text, l.url]));
+  (data.images || []).forEach((i) => rows.push(["image", i.alt, i.url]));
+  (data.metadata || []).forEach((m) => rows.push(["metadata", m.name, m.content]));
+  (data.emails || []).forEach((e) => rows.push(["email", "email", e]));
+
+  (data.tables || []).forEach((table, index) => {
+    table.rows.forEach((row) => {
+      row.forEach((cell, cellIndex) =>
+        rows.push([`table-${index + 1}`, table.headers[cellIndex] || "", cell])
+      );
+    });
+  });
+
+  (data.jsonLd || []).forEach((item) => rows.push(["json-ld", item["@type"] || "", JSON.stringify(item)]));
+
+  return rows
+    .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+}
+
+function applyTheme(theme) {
+  document.body.classList.toggle("dark", theme === "dark");
+  $("theme").textContent = theme === "dark" ? "☀" : "☾";
+  localStorage.setItem(CACHE_KEY, theme);
+}
+
+$("extractForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  extract();
+});
+
+$("search").addEventListener("input", (event) => {
+  state.query = event.target.value.trim().toLowerCase();
+  renderAll();
+});
+
+$("json").addEventListener("click", () =>
+  download("scrapely-data.json", JSON.stringify(state.data, null, 2), "application/json")
+);
+
+$("csv").addEventListener("click", () =>
+  download("scrapely-data.csv", toCsv(state.data), "text/csv")
+);
+
+$("theme").addEventListener("click", () => {
+  applyTheme(document.body.classList.contains("dark") ? "light" : "dark");
+});
+
+applyTheme(localStorage.getItem(CACHE_KEY) === "dark" ? "dark" : "light");

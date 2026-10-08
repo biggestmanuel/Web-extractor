@@ -11,7 +11,7 @@
 <main>
 <section class="hero"><div class="hero-inner"><p class="eyebrow">WEB DATA EXTRACTION</p>
 <h1>Turn webpages into <span>usable data.</span></h1>
-<p class="sub">Paste a public webpage URL and extract its title, headings, links, images and metadata into a clean, searchable result.</p>
+<p class="sub">Paste a public webpage URL and extract its title, headings, links, images, tables, metadata and structured data into a clean, searchable result.</p>
 <form id="extractForm"><input id="url" type="url" placeholder="https://example.com/page" required><button class="primary">Extract data</button></form>
 <p id="status" class="status"></p></div></section>
 <section class="container" id="results">
@@ -20,14 +20,19 @@
 <div id="empty" class="empty"><div class="empty-icon">⌁</div><h3>Ready when you are</h3><p>Enter a public URL above. Scrapely will organize useful page content into separate sections.</p></div>
 <div id="data" hidden><div class="stats">
 <article><span>Headings</span><strong id="headingCount">0</strong></article><article><span>Links</span><strong id="linkCount">0</strong></article>
-<article><span>Images</span><strong id="imageCount">0</strong></article><article><span>Metadata</span><strong id="metaCount">0</strong></article></div>
+<article><span>Images</span><strong id="imageCount">0</strong></article><article><span>Metadata</span><strong id="metaCount">0</strong></article>
+<article><span>Tables</span><strong id="tableCount">0</strong></article><article><span>Structured data</span><strong id="jsonLdCount">0</strong></article>
+<article><span>Emails</span><strong id="emailCount">0</strong></article><article><span>Characters</span><strong id="charCount">0</strong></article></div>
 <div class="search-row"><input id="search" type="search" placeholder="Filter extracted content..."></div>
 <div class="result-grid">
 <section class="panel"><h3>Page information</h3><div id="pageInfo"></div></section>
 <section class="panel"><h3>Headings</h3><div id="headings"></div></section>
 <section class="panel wide"><h3>Links</h3><div id="links"></div></section>
 <section class="panel wide"><h3>Images</h3><div id="images"></div></section>
+<section class="panel wide"><h3>Tables</h3><div id="tables"></div></section>
 <section class="panel wide"><h3>Metadata</h3><div id="metadata"></div></section>
+<section class="panel wide"><h3>Structured data (JSON-LD)</h3><div id="jsonLd"></div></section>
+<section class="panel wide"><h3>Page text</h3><div id="pageText"></div></section>
 </div></div></section>
 </main>
 <footer><span>© 2026 Scrapely</span><span>Responsible extraction of public webpages.</span></footer>

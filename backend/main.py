@@ -1,64 +1,152 @@
-from fastapi import FastAPI, Query, HTTPException
+"""Scrapely API.
+
+Endpoints
+    GET /api/health    service status
+    GET /api/extract   extract structured data from a public HTML page
+
+Design notes
+    * A user-supplied URL is untrusted input; every fetch goes through
+      safety.validate_url and fetcher.fetch_html, which re-checks each redirect.
+    * Anonymous callers share a per-IP token bucket, so one client cannot spend
+      the whole budget.
+    * Repeat requests for the same URL are served from a short-lived cache.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from datetime import datetime, timezone
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-app=FastAPI(title="Scrapely API",version="1.0.0")
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["GET"],allow_headers=["*"])
-HEADERS={"User-Agent":"Scrapely/1.0 (+public web data extraction tool)"}
-TIMEOUT=12
-MAX_BYTES=5_000_000
+import extractor
+import fetcher
+import safety
+from ratelimit import TokenBucketLimiter, TTLCache
 
-def clean(text): return " ".join((text or "").split())
+VERSION = "1.1.0"
+STATIC_DIR = Path(__file__).resolve().parent.parent
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+RATE_LIMIT_REQUESTS = _env_int("SCRAPELY_RATE_LIMIT", 10)
+RATE_LIMIT_WINDOW = float(os.environ.get("SCRAPELY_RATE_WINDOW", 60))
+CACHE_TTL = float(os.environ.get("SCRAPELY_CACHE_TTL", 300))
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("SCRAPELY_ALLOWED_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+
+limiter = TokenBucketLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
+cache = TTLCache(max_entries=256, ttl=CACHE_TTL)
+
+app = FastAPI(title="Scrapely API", version=VERSION)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+def client_ip(request: Request) -> str:
+    """Identify the caller.
+
+    X-Forwarded-For is honoured only when the app is told it runs behind a proxy
+    that sets it, otherwise a client could spoof its IP to dodge the limiter.
+    """
+    if os.environ.get("SCRAPELY_TRUST_PROXY") == "1":
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def enforce_rate_limit(request: Request) -> str:
+    ip = client_ip(request)
+    allowed, remaining, retry_after = limiter.check(ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many requests. Try again in {retry_after:.0f}s.",
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+    request.state.remaining = remaining
+    return ip
+
+
+@app.middleware("http")
+async def rate_limit_headers(request: Request, call_next):
+    response = await call_next(request)
+    remaining = getattr(request.state, "remaining", None)
+    if remaining is not None:
+        response.headers["X-RateLimit-Remaining"] = f"{remaining:.0f}"
+    return response
+
+
+RateLimited = Annotated[str, Depends(enforce_rate_limit)]
+
 
 @app.get("/api/health")
-def health(): return {"status":"ok"}
+def health() -> dict:
+    return {
+        "status": "ok",
+        "version": VERSION,
+        "rateLimit": {"requests": RATE_LIMIT_REQUESTS, "windowSeconds": RATE_LIMIT_WINDOW},
+        "allowedPorts": sorted(safety.DEFAULT_ALLOWED_PORTS),
+        "maxBytes": fetcher.MAX_BYTES,
+    }
+
 
 @app.get("/api/extract")
-def extract(url:str=Query(...,min_length=8,max_length=2048)):
-    p=urlparse(url)
-    if p.scheme not in {"http","https"} or not p.netloc:
-        raise HTTPException(400,"Enter a valid http:// or https:// URL.")
+def extract(url: Annotated[str, Query(min_length=8, max_length=safety.MAX_URL_LENGTH)], _: RateLimited) -> JSONResponse:
+    """Extract structured data from a public HTML page."""
     try:
-        r=requests.get(url,headers=HEADERS,timeout=TIMEOUT,allow_redirects=True,stream=True)
-        r.raise_for_status()
-        ct=r.headers.get("content-type","").lower()
-        if "text/html" not in ct and "application/xhtml+xml" not in ct:
-            raise HTTPException(415,"That URL does not point to an HTML page.")
-        data=r.raw.read(MAX_BYTES+1,decode_content=True)
-        if len(data)>MAX_BYTES: raise HTTPException(413,"The page is too large for this extractor.")
-        html=data.decode(r.encoding or "utf-8",errors="replace")
-        soup=BeautifulSoup(html,"html.parser")
-        title=clean(soup.title.get_text(" ",strip=True)) if soup.title else ""
-        desc=""
-        tag=soup.find("meta",attrs={"name":lambda v:v and v.lower()=="description"})
-        if tag: desc=clean(tag.get("content",""))
-        headings=[{"level":t.name,"text":clean(t.get_text(" ",strip=True))} for t in soup.find_all(["h1","h2","h3","h4","h5","h6"]) if clean(t.get_text(" ",strip=True))]
-        links=[];seen=set()
-        for t in soup.find_all("a",href=True):
-            href=t.get("href","").strip()
-            if not href or href.startswith(("#","mailto:","tel:","javascript:")): continue
-            u=urljoin(r.url,href)
-            if urlparse(u).scheme not in {"http","https"} or u in seen: continue
-            seen.add(u);links.append({"text":clean(t.get_text(" ",strip=True)) or u,"url":u})
-            if len(links)>=500: break
-        images=[];seen=set()
-        for t in soup.find_all("img"):
-            src=(t.get("src") or t.get("data-src") or "").strip()
-            if not src: continue
-            u=urljoin(r.url,src)
-            if urlparse(u).scheme not in {"http","https"} or u in seen: continue
-            seen.add(u);images.append({"alt":clean(t.get("alt","")),"url":u})
-            if len(images)>=300: break
-        metadata=[]
-        for t in soup.find_all("meta"):
-            name=t.get("name") or t.get("property") or t.get("http-equiv");content=t.get("content")
-            if name and content: metadata.append({"name":clean(name),"content":clean(content)})
-            if len(metadata)>=200: break
-        return {"url":r.url,"title":title,"description":desc,"fetchedAt":datetime.now(timezone.utc).isoformat(),"headings":headings,"links":links,"images":images,"metadata":metadata,"summary":{"headings":len(headings),"links":len(links),"images":len(images),"metadata":len(metadata)}}
-    except HTTPException: raise
-    except requests.Timeout: raise HTTPException(504,"The website took too long to respond.")
-    except requests.RequestException as e: raise HTTPException(502,f"Could not fetch that page: {e}")
-    except Exception: raise HTTPException(500,"The page could not be parsed.")
+        target = safety.validate_url(url)
+    except safety.UnsafeUrlError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    cached = cache.get(target)
+    if cached is not None:
+        return JSONResponse(cached, headers={"X-Cache": "HIT"})
+
+    try:
+        html, final_url = fetcher.fetch_html(target)
+    except fetcher.FetchError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    # The redirect target is re-validated by the fetcher, but confirm the final
+    # URL still points at a public host before parsing and caching it.
+    try:
+        safety.validate_url(final_url)
+    except safety.UnsafeUrlError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    try:
+        data = extractor.extract(html, final_url)
+    except Exception as exc:  # malformed markup should never crash the service
+        raise HTTPException(422, "The page could not be parsed.") from exc
+
+    cache.set(target, data)
+    return JSONResponse(data, headers={"X-Cache": "MISS"})
+
+
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+if (STATIC_DIR / "index.html").exists():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
