@@ -20,7 +20,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import extractor
@@ -34,14 +34,22 @@ STATIC_DIR = Path(__file__).resolve().parent.parent
 
 def _env_int(name: str, default: int) -> int:
     try:
-        return int(os.environ.get(name, default))
-    except ValueError:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
         return default
 
 
-RATE_LIMIT_REQUESTS = _env_int("SCRAPELY_RATE_LIMIT", 10)
-RATE_LIMIT_WINDOW = float(os.environ.get("SCRAPELY_RATE_WINDOW", 60))
-CACHE_TTL = float(os.environ.get("SCRAPELY_CACHE_TTL", 300))
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+RATE_LIMIT_REQUESTS = max(1, _env_int("SCRAPELY_RATE_LIMIT", 10))
+RATE_LIMIT_WINDOW = _env_float("SCRAPELY_RATE_WINDOW", 60)
+CACHE_TTL = _env_float("SCRAPELY_CACHE_TTL", 300)
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -143,10 +151,6 @@ def extract(url: Annotated[str, Query(min_length=8, max_length=safety.MAX_URL_LE
     return JSONResponse(data, headers={"X-Cache": "MISS"})
 
 
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
-
-
 if (STATIC_DIR / "index.html").exists():
+    # Mounted last so /api/* routes take precedence; html=True serves index.html at /.
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
