@@ -32,7 +32,8 @@ const FIXTURE = `<!doctype html><html lang="en"><head>
 <a href="/about">About us</a>
 <a href="mailto:hi@example.com">Email</a>
 <img src="/a.png" alt="Alpha">
-<table><tr><th>Name</th><th>Price</th></tr><tr><td>Widget</td><td>9.99</td></tr></table>
+<table><tr><th>Name</th><th>Price</th></tr><tr><td>Widget</td><td>9.99</td></tr>
+<tr><td>=1+1</td><td>+SUM(A1:A2)</td></tr></table>
 <meta name="keywords" content="news, test">
 <script type="application/ld+json">{"@type":"Article","name":"Fixture"}<\/script>
 <p>Reach hi@example.com or sales@example.org.</p>
@@ -138,7 +139,8 @@ async function run() {
   check("links rendered", document.querySelectorAll("#links .item").length === fixtureData.links.length);
   check("images rendered", document.querySelectorAll("#images .image-item").length === fixtureData.images.length);
   check("tables rendered with headers", document.querySelectorAll("#tables thead th").length === 2);
-  check("table rows rendered", document.querySelectorAll("#tables tbody tr").length === 1);
+  check("table rows rendered", document.querySelectorAll("#tables tbody tr").length === fixtureData.tables[0].rows.length,
+    String(document.querySelectorAll("#tables tbody tr").length));
   check("json-ld rendered", document.querySelectorAll("#jsonLd .code").length === fixtureData.jsonLd.length);
   check("emails panel shown when present", $("emails").hidden === false);
   check("email addresses listed", $("emailsList").textContent.includes("hi@example.com"), $("emailsList").textContent);
@@ -199,6 +201,11 @@ async function run() {
   check("csv export includes table rows", csv.includes('"table-1","Name","Widget"'));
   check("csv export includes email rows", csv.includes('"email","email","hi@example.com"'));
   check("csv quotes embedded commas", csv.includes('"A fixture page, with a comma."'), csv.slice(0, 240));
+
+  // A scraped cell beginning with = or + would run as a formula in Excel.
+  check("csv neutralises a leading equals", csv.includes(`"'=1+1"`), csv.split("\n").filter((l) => l.includes("1+1")).join(" | "));
+  check("csv neutralises a leading plus", csv.includes(`"'+SUM(A1:A2)"`));
+  check("csv leaves ordinary numbers alone", csv.includes('"9.99"'), "9.99 should not be prefixed");
 
   // Restricted pages must be refused rather than throwing.
   blockedTabUrl = "chrome://extensions";

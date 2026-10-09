@@ -125,6 +125,12 @@ function matches(...values) {
   return values.join(" ").toLowerCase().includes(state.query);
 }
 
+/**
+ * Render one label/value line.
+ *
+ * `value` is inserted as-is because callers pass markup (a link) they have
+ * already escaped. Anything else must go through escapeHtml at the call site.
+ */
 function infoRow(label, value) {
   return `<div class="info-row"><span>${escapeHtml(label)}</span><span>${value}</span></div>`;
 }
@@ -220,6 +226,19 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+/**
+ * Neutralise a cell that a spreadsheet would evaluate as a formula.
+ *
+ * Page content is untrusted, and a scraped cell beginning with =, +, - or @
+ * runs as a formula when the exported CSV is opened in Excel or Sheets. A
+ * leading apostrophe keeps the text and stops the evaluation.
+ */
+function csvCell(value) {
+  const text = String(value ?? "");
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 function toCsv(data) {
   const rows = [["type", "name", "value"]];
   rows.push(
@@ -245,9 +264,7 @@ function toCsv(data) {
 
   data.jsonLd.forEach((item) => rows.push(["json-ld", item["@type"] || "", JSON.stringify(item)]));
 
-  return rows
-    .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 function filenameFor(data, extension) {

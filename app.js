@@ -187,6 +187,19 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+/**
+ * Neutralise a cell that a spreadsheet would evaluate as a formula.
+ *
+ * Extracted page content is untrusted, and a cell beginning with =, +, - or @
+ * runs as a formula when the CSV is opened in Excel or Sheets. A leading
+ * apostrophe keeps the text and stops the evaluation.
+ */
+function csvCell(value) {
+  const text = String(value ?? "");
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
 function toCsv(data) {
   const rows = [["type", "name", "value"]];
 
@@ -209,9 +222,7 @@ function toCsv(data) {
 
   (data.jsonLd || []).forEach((item) => rows.push(["json-ld", item["@type"] || "", JSON.stringify(item)]));
 
-  return rows
-    .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
-    .join("\n");
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 function applyTheme(theme) {
