@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scrapely</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand"><span class="logo">S</span> Scrapely</span>
+  <button id="refresh" class="icon" title="Re-extract">↻</button>
+</header>
+
+<main>
+  <p id="loading" class="status">Reading page…</p>
+  <p id="status" class="status"></p>
+
+  <div id="empty" class="empty" hidden>
+    <h3>Nothing extracted</h3>
+    <p>Open a webpage, then click the Scrapely icon to read it.</p>
+  </div>
+
+  <div id="data" hidden>
+    <div class="page-head">
+      <h2 id="pageTitle"></h2>
+      <a id="pageUrl" class="url" target="_blank" rel="noopener noreferrer"></a>
+    </div>
+
+    <div id="stats" class="stats"></div>
+
+    <input id="search" type="search" placeholder="Filter extracted content…">
+
+    <div class="actions">
+      <button id="csv" class="secondary">Export CSV</button>
+      <button id="json" class="secondary">Export JSON</button>
+    </div>
+
+    <section class="panel"><h3>Page information</h3><div id="pageInfo"></div></section>
+    <section class="panel"><h3>Headings</h3><div id="headings"></div></section>
+    <section class="panel"><h3>Links</h3><div id="links"></div></section>
+    <section class="panel"><h3>Images</h3><div id="images"></div></section>
+    <section class="panel"><h3>Tables</h3><div id="tables"></div></section>
+    <section class="panel"><h3>Metadata</h3><div id="metadata"></div></section>
+    <section class="panel"><h3>Structured data (JSON-LD)</h3><div id="jsonLd"></div></section>
+    <section class="panel" id="emails" hidden>
+      <h3>Emails (<span id="emailsCount">0</span>)</h3>
+      <div class="item"><span class="muted" id="emailsList"></span></div>
+    </section>
+    <section class="panel"><h3>Page text</h3><div id="pageText"></div></section>
+  </div>
+</main>
+
+<footer>Reads the page you are viewing. Nothing is uploaded.</footer>
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scrapely extractor tests</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 20px; }
+  #results { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .pass::before { content: "PASS "; color: #15803d; font-weight: bold; }
+  .fail { color: #b91c1c; font-weight: bold; }
+  .fail::before { content: "FAIL "; }
+  #summary { margin: 14px 0; font-size: 15px; font-weight: bold; }
+  iframe { width: 700px; height: 340px; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+<h1>Scrapely extractor tests</h1>
+<p>Each case loads <code>extractor.js</code> into a sandboxed iframe and reads the result.</p>
+<div id="summary">running…</div>
+<div id="results"></div>
+
+<script src="../src/extractor.js"></script>
+<script>
+// Read the source once; each iframe needs its own copy injected as text,
+// because a script tag's globals do not cross document boundaries.
+let EXTRACTOR_SOURCE = "";
+fetch("../src/extractor.js")
+  .then((r) => r.text())
+  .then((text) => {
+    EXTRACTOR_SOURCE = text;
+    return run();
+  })
+  .catch((error) => {
+    document.getElementById("summary").textContent = "could not load extractor.js: " + error;
+    document.getElementById("summary").dataset.done = "true";
+  });
+const CASES = [];
+const test = (name, html, url, check) => CASES.push({ name, html, url, check });
+
+// --- fixture page ---
+// Note: closing script tags inside this literal must be written as <\/script>,
+// otherwise the HTML parser ends this inline block at the first one.
+const FIXTURE = `<!doctype html><html lang="en-GB"><head>
+<title>  Example   Domain  </title>
+<meta name="description" content="A reserved example domain.">
+<meta property="og:title" content="Example Domain OG">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="https://example.com/canonical">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Example"}<\/script>
+<script type="application/ld+json">{not json}<\/script>
+</head><body>
+<nav><a href="/nav">Nav</a></nav>
+<main>
+<h1>Main heading</h1><h2>Sub   heading</h2><h3></h3>
+<a href="/about">About us</a>
+<a href="https://example.com/about">Duplicate</a>
+<a href="mailto:hello@example.com">Email</a>
+<a href="javascript:void(0)">JS</a>
+<a href="#top">Top</a>
+<a href="tel:+15551234">Call</a>
+<a href="ftp://example.com/file">FTP</a>
+<img src="https://example.com/logo.png" alt="Logo" width="120" height="40">
+<img data-src="https://example.com/hero.jpg" alt="Hero">
+<img src="javascript:void(0)" alt="Tracker">
+<img src="https://example.com/logo.png" alt="Duplicate">
+<p>Contact hello@example.com or sales@example.org.</p>
+</main>
+<table class="wikitable"><tr><th>Name</th><th>Price</th></tr>
+<tr><td>Widget</td><td>9.99</td></tr></table>
+<table class="navbox-inner"><tr><th>Lists of countries</th></tr>
+<tr><td><a>Nominal</a></td><td><a>Per capita</a></td></tr></table>
+<table><tr><td>nav link</td></tr><tr><td>another</td></tr></table>
+<table class="data-table header-cells"><tr><th>Year</th><th>Total</th></tr>
+<tr><td>2026</td><td>7</td></tr></table>
+<script>console.log("ignored");<\/script>
+</body></html>`;
+
+test("title collapses whitespace", FIXTURE, "https://example.com/page", (d) =>
+  d.title === "Example Domain");
+
+test("description from meta", FIXTURE, "https://example.com/page", (d) =>
+  d.description === "A reserved example domain.");
+
+test("canonical resolved to absolute", FIXTURE, "https://example.com/page", (d) =>
+  d.canonical === "https://example.com/canonical");
+
+test("language lowercased", FIXTURE, "https://example.com/page", (d) =>
+  d.language === "en-gb");
+
+test("headings skip empty", FIXTURE, "https://example.com/page", (d) =>
+  JSON.stringify(d.headings.map((h) => h.text)) === JSON.stringify(["Main heading", "Sub heading"]) &&
+  d.headings[0].level === "h1");
+
+test("links absolute, deduped, non-http dropped", FIXTURE, "https://example.com/page", (d) =>
+  JSON.stringify(d.links.map((l) => l.url)) ===
+  JSON.stringify(["https://example.com/nav", "https://example.com/about"]));
+
+test("images use lazy attrs, skip javascript:, dedupe", FIXTURE, "https://example.com/page", (d) =>
+  JSON.stringify(d.images.map((i) => i.url)) ===
+  JSON.stringify(["https://example.com/logo.png", "https://example.com/hero.jpg"]) &&
+  d.images[0].width === 120 && d.images[0].height === 40);
+
+test("metadata filtered to meaningful tags", FIXTURE, "https://example.com/page", (d) => {
+  const names = d.metadata.map((m) => m.name);
+  return names.includes("description") && names.includes("og:title") && !names.includes("viewport");
+});
+
+test("json-ld skips malformed blocks", FIXTURE, "https://example.com/page", (d) =>
+  d.jsonLd.length === 1 && d.jsonLd[0]["@type"] === "Organization");
+
+test("emails from mailto and text", FIXTURE, "https://example.com/page", (d) =>
+  d.emails.includes("hello@example.com") && d.emails.includes("sales@example.org"));
+
+test("data table kept with correct headers", FIXTURE, "https://example.com/page", (d) =>
+  d.tables.some((t) => t.headers[0] === "Name" && t.rows[0][0] === "Widget"));
+
+test("navbox table skipped", FIXTURE, "https://example.com/page", (d) =>
+  !d.tables.some((t) => t.headers.some((h) => h.includes("Lists of countries"))));
+
+test("single-column table skipped", FIXTURE, "https://example.com/page", (d) =>
+  !d.tables.some((t) => t.headers[0] === "nav link"));
+
+test("descriptive class name still kept", FIXTURE, "https://example.com/page", (d) =>
+  d.tables.some((t) => t.headers[0] === "Year" && t.headers[1] === "Total"));
+
+test("script text excluded from page text", FIXTURE, "https://example.com/page", (d) =>
+  !d.text.includes("ignored") && d.text.includes("Main heading"));
+
+test("summary counts match sections", FIXTURE, "https://example.com/page", (d) =>
+  d.summary.headings === d.headings.length &&
+  d.summary.links === d.links.length &&
+  d.summary.tables === d.tables.length &&
+  d.summary.jsonLd === d.jsonLd.length);
+
+test("summary.characters matches text", FIXTURE, "https://example.com/page", (d) =>
+  d.summary.characters === d.text.length);
+
+test("handles empty document", "<html></html>", "https://example.com/", (d) =>
+  d.title === "" && Array.isArray(d.links) && d.links.length === 0);
+
+test("handles unclosed markup", "<html><body><h1>unclosed", "https://example.com/", (d) =>
+  d.headings.length === 1);
+
+test("relative links resolve against base", '<a href="rel/page">Rel</a>', "https://example.com/dir/index.html", (d) =>
+  d.links[0].url === "https://example.com/dir/rel/page");
+
+test("extraction does not mutate the page DOM", FIXTURE, "https://example.com/page", (d, frame) => {
+  // extractText works on a clone precisely so the visible page keeps its
+  // scripts and headings.
+  const doc = frame.contentDocument;
+  const headings = Array.from(doc.querySelectorAll("h1")).map((h) => h.textContent);
+  return headings.length === 1 && headings[0] === "Main heading";
+});
+
+test("output is JSON-serialisable", FIXTURE, "https://example.com/page", (d) => {
+  JSON.parse(JSON.stringify(d));
+  return true;
+});
+
+async function run() {
+  const results = document.getElementById("results");
+  let passed = 0;
+  let failed = 0;
+
+  for (const c of CASES) {
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write(c.html);
+    doc.close();
+
+    // An iframe with no src inherits the parent's URL, which would make every
+    // relative link resolve against the harness instead of the fixture. A
+    // <base> reproduces the URL a real content script would run against.
+    const base = doc.createElement("base");
+    base.href = c.url;
+    doc.head.insertBefore(base, doc.head.firstChild);
+
+    // Re-inject: the iframe has its own global, so the parent's copy is absent.
+    const script = doc.createElement("script");
+    script.textContent = EXTRACTOR_SOURCE;
+    doc.head.appendChild(script);
+
+    let data = null;
+    try {
+      data = frame.contentWindow.ScrapelyExtract();
+    } catch (error) {
+      data = { __error: String(error) };
+    }
+
+    let ok = false;
+    let detail = "";
+    try {
+      ok = c.check(data, frame);
+    } catch (error) {
+      detail = String(error);
+    }
+    ok ? passed++ : failed++;
+
+    const line = document.createElement("div");
+    line.className = ok ? "pass" : "fail";
+    line.textContent = c.name + (ok ? "" : "  ->  " + (detail || JSON.stringify(data).slice(0, 200)));
+    results.appendChild(line);
+    frame.remove();
+  }
+
+  document.getElementById("summary").textContent = `${passed} passed, ${failed} failed`;
+  document.getElementById("summary").dataset.done = "true";
+  document.getElementById("summary").dataset.failed = String(failed);
+}
+</script>
+</body>
+</html>
