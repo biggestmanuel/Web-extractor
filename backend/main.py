@@ -28,7 +28,7 @@ import fetcher
 import safety
 from ratelimit import TokenBucketLimiter, TTLCache
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 STATIC_DIR = Path(__file__).resolve().parent.parent
 
 

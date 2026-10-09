@@ -141,7 +141,7 @@ uvicorn main:app --reload
 Then open:
 
 - http://127.0.0.1:8000/extension/test/extractor.test.html — 22 tests for extraction
-- http://127.0.0.1:8000/extension/test/popup.test.html — 32 tests for rendering and exports
+- http://127.0.0.1:8000/extension/test/popup.test.html — 35 tests for rendering and exports
 
 Each prints a pass/fail summary at the top. `extractor.js` is a deliberate port of `backend/extractor.py`; if you change the filtering rules in one, change them in the other.
 
