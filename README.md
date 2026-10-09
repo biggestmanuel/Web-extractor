@@ -1,6 +1,11 @@
 # Scrapely — Web Data Extractor
 
-Paste a public webpage URL, get structured data back: title, metadata, headings, links, images, tables, JSON-LD and page text. Filter it in the browser, export to JSON or CSV.
+Extract structured data from a webpage: title, metadata, headings, links, images, tables, JSON-LD and page text. Filter it, export to JSON or CSV.
+
+Two front ends share the same extraction rules:
+
+- **Web tool** — paste a URL and extract it on the server
+- **Browser extension** — extract the page you are currently viewing
 
 ## Features
 
@@ -90,16 +95,55 @@ Set `SCRAPELY_TRUST_PROXY=1` only when a proxy you control sets that header. Oth
 
 ```
 AGENTS.md                        Working agreements for coding agents
-index.html, app.js, styles.css   Frontend
+index.html, app.js, styles.css   Web tool frontend
 backend/main.py                  FastAPI app, routes, configuration
 backend/safety.py                URL validation and SSRF protection
 backend/fetcher.py               Redirect-aware HTTP with size and time limits
 backend/extractor.py             Pure HTML parsing, no I/O
 backend/ratelimit.py             Token bucket limiter and TTL cache
 backend/tests/                   pytest suite
+extension/manifest.json          Browser extension manifest
+extension/src/extractor.js       Extraction against the live DOM
+extension/src/popup.*            Extension popup UI
+extension/test/                  Browser tests, served over HTTP
 ```
 
 `extractor.py` has no network or framework dependency, so extraction rules can be tested directly against HTML fixtures.
+
+## Browser extension
+
+`extension/` holds a Manifest V3 Chrome/Edge extension that reads the page you are viewing. No build step and no npm install.
+
+### Load it unpacked
+
+1. Open `chrome://extensions`
+2. Turn on **Developer mode**
+3. Click **Load unpacked** and choose the `extension` folder
+4. Pin Scrapely, open any webpage, click the icon
+
+### How it works
+
+The popup injects `src/extractor.js` into the active tab and renders whatever it returns. Because the browser performs the fetch, none of the server-side protections apply here — there is no outbound request of your own to abuse, so SSRF blocking, DNS-rebinding defence, rate limiting and redirect caps are all the browser's problem rather than the app's.
+
+That is the main reason to prefer the extension where either would do: a smaller attack surface and no server to operate. The trade-off is that it can only read the page in front of you, not an arbitrary URL.
+
+Permissions requested are `activeTab`, `scripting` and `storage`. There is deliberately no `<all_urls>` host permission, so the extension cannot read anything until you click it on that page.
+
+### Tests
+
+Both test pages are static and must be served over HTTP, not opened as `file://`:
+
+```
+cd backend
+uvicorn main:app --reload
+```
+
+Then open:
+
+- http://127.0.0.1:8000/extension/test/extractor.test.html — 22 tests for extraction
+- http://127.0.0.1:8000/extension/test/popup.test.html — 32 tests for rendering and exports
+
+Each prints a pass/fail summary at the top. `extractor.js` is a deliberate port of `backend/extractor.py`; if you change the filtering rules in one, change them in the other.
 
 `AGENTS.md` records the commit-per-change rule and the review checklist to run before committing.
 
