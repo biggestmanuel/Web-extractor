@@ -40,23 +40,33 @@ async function activeTab() {
   return tab;
 }
 
+/** Drop any previously extracted data so an error cannot leave stale results on screen. */
+function showError(message) {
+  status(message, true);
+  state.data = null;
+  state.query = "";
+  $("data").hidden = true;
+  $("loading").hidden = true;
+  $("empty").hidden = false;
+}
+
 async function extract() {
   status("Reading page…");
+  $("loading").hidden = false;
   $("empty").hidden = true;
+  $("data").hidden = true;
 
   let tab;
   try {
     tab = await activeTab();
   } catch (error) {
-    status(error.message || "Could not read the active tab.", true);
-    $("empty").hidden = false;
+    showError(error.message || "Could not read the active tab.");
     return;
   }
 
   const blocked = unsupportedPageReason(tab.url || "");
   if (blocked) {
-    status(blocked, true);
-    $("empty").hidden = false;
+    showError(blocked);
     return;
   }
 
@@ -80,8 +90,7 @@ async function extract() {
     render(data);
     status("");
   } catch (error) {
-    status(error.message || "Could not read this page.", true);
-    $("empty").hidden = false;
+    showError(error.message || "Could not read this page.");
   }
 }
 
