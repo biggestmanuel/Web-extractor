@@ -144,6 +144,18 @@ def test_named_navigation_tables_are_skipped():
     assert tables[0]["headers"] == ["Country", "GDP"]
 
 
+def test_data_tables_with_descriptive_class_names_are_kept():
+    """Class hints match whole tokens; "table-header-row" is not a layout table."""
+    html = """
+    <table class="wikitable sortable"><tr><th>Country</th><th>GDP</th></tr>
+    <tr><td>World</td><td>100</td></tr></table>
+    <table class="data-table header-cells"><tr><th>Year</th><th>Total</th></tr>
+    <tr><td>2026</td><td>7</td></tr></table>
+    """
+    tables = extractor.extract(html, "https://example.com/")["tables"]
+    assert [t["headers"] for t in tables] == [["Country", "GDP"], ["Year", "Total"]]
+
+
 def test_single_cell_header_is_not_treated_as_columns():
     html = "<table><tr><th>Section</th></tr><tr><td>a</td></tr><tr><td>b</td></tr></table>"
     assert extractor.extract(html, "https://example.com/")["tables"] == []

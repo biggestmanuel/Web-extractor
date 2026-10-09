@@ -166,7 +166,9 @@ def extract_metadata(soup: BeautifulSoup) -> list[dict]:
     return metadata
 
 
-LAYOUT_CLASS_HINTS = ("navbox", "navigation", "toc", "menu", "footer", "header", "breadcrumb")
+LAYOUT_CLASS_HINTS = frozenset(
+    {"navbox", "navigation", "nav", "toc", "menu", "footer", "breadcrumb", "sidebar", "banner", "wrapper", "layout"}
+)
 
 
 def _is_layout_table(table) -> bool:
@@ -180,10 +182,17 @@ def _is_layout_table(table) -> bool:
     if table.get("role") == "presentation":
         return True
 
-    markers = " ".join(
-        str(table.get(attribute, "")) for attribute in ("class", "id", "data-layout")
-    ).lower()
-    if any(hint in markers for hint in LAYOUT_CLASS_HINTS):
+    # Matched as whole class tokens, not substrings: a genuine data table is
+    # often classed "table-header-row" or "header-cells", and a substring test
+    # would throw it away.
+    tokens = set()
+    for attribute in ("class", "id"):
+        raw = table.get(attribute)
+        if isinstance(raw, str):
+            tokens.update(raw.lower().split())
+        elif isinstance(raw, (list, tuple)):
+            tokens.update(str(value).lower() for value in raw)
+    if tokens & LAYOUT_CLASS_HINTS:
         return True
 
     rows = [tr.find_all(["th", "td"]) for tr in table.find_all("tr")]
