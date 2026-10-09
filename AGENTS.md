@@ -43,6 +43,11 @@ catch. Specifically:
   update the README and add a test that pins the new behaviour.
 - **Encoding.** Handle text as UTF-8. Do not trust a charset the server did not
   declare (see `fetcher._decode`).
+- **Untrusted content reaching an output sink.** Page content is attacker
+  controlled. Anything interpolated into `innerHTML` in `app.js` or
+  `extension/src/popup.js` must go through `escapeHtml`, and anything written
+  into a CSV cell must go through `csvCell`, which neutralises leading `=`,
+  `+`, `-` and `@` so a scraped page cannot ship a spreadsheet formula.
 
 ## Project layout
 
