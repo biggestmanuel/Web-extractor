@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scrapely popup tests</title>
+<link rel="stylesheet" href="../src/popup.css">
+<style>
+  body { width: auto; margin: 20px; font-family: system-ui, sans-serif; }
+  #summary { margin: 12px 0; font-size: 16px; font-weight: bold; }
+  #results { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  .pass::before { content: "PASS "; color: #15803d; font-weight: bold; }
+  .fail { color: #b91c1c; font-weight: bold; }
+  .fail::before { content: "FAIL "; }
+  #stage { margin-top: 18px; border: 1px solid #ccc; width: 460px; }
+</style>
+</head>
+<body>
+<h1>Scrapely popup tests</h1>
+<p>Runs <code>popup.js</code> against a fixture page with the extension APIs stubbed.</p>
+<div id="summary">running…</div>
+<div id="results"></div>
+<div id="stage"></div>
+
+<script>
+const FIXTURE = `<!doctype html><html lang="en"><head>
+<title>Fixture News</title>
+<meta name="description" content="A fixture page, with a comma.">
+<link rel="canonical" href="/canonical">
+</head><body>
+<h1>Headline</h1><h2>Sub</h2>
+<a href="/privacy">Privacy policy</a>
+<a href="/about">About us</a>
+<a href="mailto:hi@example.com">Email</a>
+<img src="/a.png" alt="Alpha">
+<table><tr><th>Name</th><th>Price</th></tr><tr><td>Widget</td><td>9.99</td></tr></table>
+<meta name="keywords" content="news, test">
+<script type="application/ld+json">{"@type":"Article","name":"Fixture"}<\/script>
+<p>Reach hi@example.com or sales@example.org.</p>
+</body></html>`;
+
+const FIXTURE_URL = "https://fixture.example.com/news";
+
+const results = document.getElementById("results");
+let passed = 0;
+let failed = 0;
+
+function check(name, condition, detail) {
+  const line = document.createElement("div");
+  const ok = Boolean(condition);
+  ok ? passed++ : failed++;
+  line.className = ok ? "pass" : "fail";
+  line.textContent = name + (ok ? "" : "  ->  " + (detail || ""));
+  results.appendChild(line);
+}
+
+function finish() {
+  const summary = document.getElementById("summary");
+  summary.textContent = `${passed} passed, ${failed} failed`;
+  summary.dataset.done = "true";
+}
+
+/** Extract the fixture using the real extractor, inside an isolated iframe. */
+function extractFixture() {
+  return new Promise((resolve) => {
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write(FIXTURE);
+    doc.close();
+    const base = doc.createElement("base");
+    base.href = FIXTURE_URL;
+    doc.head.insertBefore(base, doc.head.firstChild);
+    resolve(frame);
+  });
+}
+
+async function run() {
+  const [extractorSource, popupSource, popupMarkup] = await Promise.all([
+    fetch("../src/extractor.js").then((r) => r.text()),
+    fetch("../src/popup.js").then((r) => r.text()),
+    fetch("../src/popup.html").then((r) => r.text()),
+  ]);
+
+  // Pre-extract the fixture so the stubbed executeScript can return it.
+  const fixtureFrame = await extractFixture();
+  const inject = fixtureFrame.contentDocument.createElement("script");
+  inject.textContent = extractorSource;
+  fixtureFrame.contentDocument.head.appendChild(inject);
+  const fixtureData = fixtureFrame.contentWindow.ScrapelyExtract();
+
+  // Mount popup.html's markup, then run popup.js against it.
+  const stage = document.getElementById("stage");
+  stage.innerHTML = popupMarkup
+    .replace(/[\s\S]*<body>/, "")
+    .replace(/<\/body>[\s\S]*/, "")
+    .replace(/<script src="popup\.js"><\/script>/, "");
+
+  let extracted = null;
+  let blockedTabUrl = null;
+
+  globalThis.chrome = {
+    tabs: { query: async () => [{ id: 1, url: blockedTabUrl ?? FIXTURE_URL }] },
+    scripting: {
+      executeScript: async ({ func }) => {
+        if (typeof func === "function") return [{ result: fixtureData }];
+        return [{ result: null }];
+      },
+    },
+  };
+
+  // popup.js is an IIFE-free module expecting its markup to already be present.
+  new Function(popupSource)();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const $ = (id) => document.getElementById(id);
+
+  check("loading indicator hidden after render", $("loading").hidden === true);
+  check("empty state hidden after render", $("empty").hidden === true);
+  check("data panel visible", $("data").hidden === false);
+  check("page title shown", $("pageTitle").textContent === "Fixture News", $("pageTitle").textContent);
+  // The iframe inherits this harness URL, so the reported page URL is that
+  // rather than the fixture's. A real content script runs against the page itself.
+  check("page url shown", $("pageUrl").textContent === location.href, $("pageUrl").textContent);
+
+  const stats = Array.from(document.querySelectorAll("#stats article")).map((a) => [
+    a.querySelector("span").textContent,
+    a.querySelector("strong").textContent,
+  ]);
+  const byLabel = Object.fromEntries(stats);
+  check("stats show link count", byLabel.Links === String(fixtureData.summary.links), JSON.stringify(byLabel));
+  check("stats show heading count", byLabel.Headings === String(fixtureData.summary.headings));
+  check("stats show table count", byLabel.Tables === String(fixtureData.summary.tables));
+  check("stats show character count", byLabel.Characters === String(fixtureData.summary.characters));
+
+  check("headings rendered", document.querySelectorAll("#headings .item").length === fixtureData.headings.length);
+  check("links rendered", document.querySelectorAll("#links .item").length === fixtureData.links.length);
+  check("images rendered", document.querySelectorAll("#images .image-item").length === fixtureData.images.length);
+  check("tables rendered with headers", document.querySelectorAll("#tables thead th").length === 2);
+  check("table rows rendered", document.querySelectorAll("#tables tbody tr").length === 1);
+  check("json-ld rendered", document.querySelectorAll("#jsonLd .code").length === fixtureData.jsonLd.length);
+  check("emails panel shown when present", $("emails").hidden === false);
+  check("email addresses listed", $("emailsList").textContent.includes("hi@example.com"), $("emailsList").textContent);
+  check("page text rendered", $("pageText").textContent.includes("Headline"));
+
+  const infoText = $("pageInfo").textContent;
+  check("canonical shown in page info", infoText.includes("https://fixture.example.com/canonical"), infoText.slice(0, 140));
+  check("language shown in page info", infoText.includes("Languageen"), infoText.slice(0, 140));
+
+  // Filtering
+  $("search").value = "privacy";
+  $("search").dispatchEvent(new Event("input"));
+  const filteredLinks = document.querySelectorAll("#links .item").length;
+  check("filter narrows links to matching row", filteredLinks === 1, String(filteredLinks));
+
+  $("search").value = "zzz-no-match";
+  $("search").dispatchEvent(new Event("input"));
+  const emptyCount = document.querySelectorAll(".empty-small").length;
+  check("no-match shows empty messages", emptyCount > 0, String(emptyCount));
+
+  $("search").value = "";
+  $("search").dispatchEvent(new Event("input"));
+  check("clearing filter restores links", document.querySelectorAll("#links .item").length === fixtureData.links.length);
+
+  // Exports, captured by intercepting object URLs.
+  const captured = [];
+  const realCreate = URL.createObjectURL;
+  URL.createObjectURL = (blob) => {
+    captured.push(blob);
+    return "blob:stub";
+  };
+  const realClick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function () {};
+
+  $("json").click();
+  $("csv").click();
+
+  URL.createObjectURL = realCreate;
+  HTMLAnchorElement.prototype.click = realClick;
+
+  const texts = await Promise.all(captured.map((blob) => blob.text()));
+  const csv = texts[1] || "";
+  const json = texts[0] || "";
+
+  check("json export is the extracted payload", (() => {
+    try {
+      return JSON.parse(json).title === "Fixture News";
+    } catch {
+      return false;
+    }
+  })(), json.slice(0, 120));
+
+  check("json export contains every section", ["headings", "links", "images", "tables", "metadata", "jsonLd", "emails"]
+    .every((key) => json.includes(`"${key}"`)));
+
+  check("csv export has a header row", csv.split("\n")[0] === '"type","name","value"', csv.split("\n")[0]);
+  check("csv export includes link rows", csv.includes('"link","Privacy policy"'), csv.slice(0, 200));
+  check("csv export includes table rows", csv.includes('"table-1","Name","Widget"'));
+  check("csv export includes email rows", csv.includes('"email","email","hi@example.com"'));
+  check("csv quotes embedded commas", csv.includes('"A fixture page, with a comma."'), csv.slice(0, 240));
+
+  // Restricted pages must be refused rather than throwing.
+  blockedTabUrl = "chrome://extensions";
+  $("refresh").click();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  check("restricted page reported as an error", $("status").classList.contains("error"), $("status").textContent);
+  check("restricted page hides data panel", $("data").hidden === true);
+
+  finish();
+}
+
+run().catch((error) => {
+  check("harness completed without throwing", false, String(error));
+  finish();
+});
+</script>
+</body>
+</html>
