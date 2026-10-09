@@ -12,6 +12,7 @@ class StubResponse:
         self.headers = {"content-type": "text/html; charset=utf-8"} if headers is None else headers
         self.url = url
         self.encoding = "utf-8"
+        self.apparent_encoding = None
         self.raw = _Raw(body)
         self.closed = False
 
@@ -158,5 +159,19 @@ def test_decodes_charset_from_content_type():
     body = "<h1>café</h1>".encode("latin-1")
     response = StubResponse(headers={"content-type": "text/html; charset=iso-8859-1"}, body=body)
     response.encoding = None
+    response.apparent_encoding = "iso-8859-1"
     html, _ = fetcher.fetch_html("https://example.com/", session=StubSession([response]))
     assert "café" in html
+
+
+def test_undeclared_charset_is_detected_not_assumed_iso8859():
+    """requests labels an undeclared text/html body ISO-8859-1; that would mangle UTF-8."""
+    response = StubResponse(
+        headers={"content-type": "text/html"},
+        body="<h1>café — dash</h1>".encode("utf-8"),
+    )
+    response.encoding = "ISO-8859-1"          # what requests really sets
+    response.apparent_encoding = "utf-8"      # what detection finds
+    html, _ = fetcher.fetch_html("https://example.com/", session=StubSession([response]))
+    assert "café — dash" in html
+    assert "\ufffd" not in html and "â" not in html

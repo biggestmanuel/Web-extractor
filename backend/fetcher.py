@@ -7,7 +7,7 @@ redirects to 127.0.0.1 is the classic way to defeat a one-shot SSRF check.
 from __future__ import annotations
 
 import requests
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import safety
 
@@ -56,16 +56,24 @@ def _looks_like_html(data: bytes) -> bool:
     return b"<html" in head or b"<body" in head or b"<title" in head or b"<div" in head
 
 
+def _declared_charset(content_type: str) -> str | None:
+    """Return the charset named in a Content-Type header, if any."""
+    for part in content_type.split(";")[1:]:
+        key, _, value = part.strip().partition("=")
+        if key.lower() == "charset" and value:
+            return value.strip('"\' ') or None
+    return None
+
+
 def _decode(data: bytes, response: requests.Response) -> str:
-    """Decode bytes using the response charset, letting BeautifulSoup guess if needed."""
-    encoding = response.encoding
-    if not encoding:
-        content_type = response.headers.get("content-type", "")
-        for part in content_type.split(";")[1:]:
-            key, _, value = part.strip().partition("=")
-            if key.lower() == "charset" and value:
-                encoding = value.strip('"\' ')
-                break
+    """Decode a response body using the charset the server actually declared.
+
+    requests sets ``Response.encoding`` to ISO-8859-1 for any ``text/*`` body
+    with no charset, per the HTTP default. Trusting that mangles UTF-8 pages,
+    turning an em-dash into mojibake, so a charset is only honoured when the
+    server stated one. Otherwise the encoding is detected from the bytes.
+    """
+    encoding = _declared_charset(response.headers.get("content-type", "")) or response.apparent_encoding
     try:
         return data.decode(encoding or "utf-8", errors="replace")
     except (LookupError, TypeError):
