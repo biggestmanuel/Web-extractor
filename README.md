@@ -25,6 +25,7 @@ Interface
 
 Safety
 - SSRF protection: private, loopback, link-local, CGNAT and reserved addresses are refused, including on every redirect hop
+- Connections pinned to the validated address, so DNS cannot rebind between validation and connect
 - Obfuscated hosts such as `http://2130706433/` are decoded and rejected
 - Per-IP rate limiting with `Retry-After`
 - Redirect limit of 5, 5 MB response cap, 12s read timeout
@@ -59,7 +60,7 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
-86 tests cover URL validation and SSRF handling, redirect behaviour, charset handling, extraction rules, rate limiting and caching, and the HTTP API. They use stub sessions and fixtures, so no test touches the network.
+100 tests cover URL validation and SSRF handling, connection pinning, redirect behaviour, charset handling, extraction rules, rate limiting and caching, and the HTTP API. They use stub sessions and fixtures, so no test touches the network.
 
 ## API
 
@@ -105,7 +106,8 @@ backend/tests/                   pytest suite
 extension/manifest.json          Browser extension manifest
 extension/src/extractor.js       Extraction against the live DOM
 extension/src/popup.*            Extension popup UI
-extension/test/                  Browser tests, served over HTTP
+extension/test/                  Browser tests, served over HTTP, plus a
+                                 real-browser test driven over CDP
 ```
 
 `extractor.py` has no network or framework dependency, so extraction rules can be tested directly against HTML fixtures.
@@ -145,11 +147,24 @@ Then open:
 
 Each prints a pass/fail summary at the top. `extractor.js` is a deliberate port of `backend/extractor.py`; if you change the filtering rules in one, change them in the other.
 
+There is also a test that loads the extension into a real browser:
+
+```
+node extension/test/browser.e2e.mjs
+```
+
+It drives Chromium over the DevTools protocol, injects `extractor.js` into a live page with the real `chrome.scripting` API, renders the result in the real popup, and checks the exports. Set `SCRAPELY_CHROMIUM` if the browser is not at the Playwright path it looks for. Branded Chrome and Edge refuse `--load-extension`, which is why this uses the CDP `Extensions.loadUnpacked` domain instead.
+
+This covers everything except the `activeTab` grant itself, which needs a real toolbar click. The staged copy used by the test adds one host permission to work around that.
+
 `AGENTS.md` records the commit-per-change rule and the review checklist to run before committing.
 
 ### Known limitation
 
-DNS is resolved during URL validation and resolved again by the HTTP client when it connects. A hostname with a very short TTL could rebind to a private address in between. Closing that requires pinning the resolved IP and setting the `Host` header on the connection; it has not been done here. The existing checks still block the straightforward cases: bad scheme, disallowed port, embedded credentials, any private answer in DNS, and a public URL redirecting to a private one.
+Connections are pinned to the address that was validated, so DNS rebinding does not work here. Two details remain worth knowing:
+
+- Pinning uses a single validated address. urllib3 would normally try every address a host returns, so a site whose first address is down will fail rather than fail over to the next.
+- Requests routed through an explicitly configured proxy are passed through unpinned, because the proxy resolves names itself. The service does not configure a proxy.
 
 ## Before running this in public
 

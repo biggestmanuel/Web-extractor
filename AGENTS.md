@@ -61,7 +61,8 @@ backend/ratelimit.py             Token bucket limiter and TTL cache
 backend/tests/                   pytest suite
 extension/                       Browser extension (Manifest V3)
 extension/src/extractor.js       Extraction against the live DOM
-extension/test/                  Browser tests, served over HTTP
+extension/test/                  Browser tests, served over HTTP, plus a
+                                 real-browser test driven over CDP
 ```
 
 `extractor.py` must stay free of network and framework imports so extraction
@@ -74,7 +75,7 @@ bug: the two front ends would disagree about the same page.
 ## Commands
 
 ```
-python -m pytest                          run the suite (86 tests)
+python -m pytest                          run the suite (100 tests)
 cd backend && uvicorn main:app --reload   run the app on :8000
 ```
 
@@ -89,6 +90,20 @@ load the extractor with `fetch` and `new Function`. With the backend running:
 Both print a pass/fail summary. Run them after touching anything in
 `extension/src`. Opening them as `file://` fails: `fetch` and the injected
 script are blocked on opaque origins.
+
+For the extension's real behaviour, there is a test that drives an actual
+browser:
+
+```
+node extension/test/browser.e2e.mjs
+```
+
+It loads the extension with CDP's `Extensions.loadUnpacked` and exercises the
+real `chrome.scripting` path against a live page, then the real popup render
+and export code. Use this rather than trusting the stubbed harness. Two notes if
+it fails: branded Chrome and Edge ignore `--load-extension`, so do not "fix" a
+failure by switching to that flag, and set `SCRAPELY_CHROMIUM` if no Playwright
+Chromium is found.
 
 ## Testing expectations
 
@@ -112,12 +127,16 @@ script are blocked on opaque origins.
 The service fetches URLs supplied by anonymous users. Treat that as hostile
 input on every path.
 
-Known limitation: DNS is resolved during validation and resolved again by the
-HTTP client when it connects, so a hostname with a very short TTL could
-rebind in between. Closing that fully requires pinning the resolved IP and
-setting `Host` on the connection. The current checks (scheme, port,
-credentials, all resolved answers, and revalidation on every redirect hop)
-block the straightforward attacks.
+DNS rebinding is handled: connections are pinned to the address that was
+validated, and only the socket target changes — URL, `Host` header, SNI and
+certificate verification all still use the hostname. If you touch `PinnedAdapter`
+in `fetcher.py`, keep those in step. Setting only the socket address breaks TLS,
+because SNI would carry the IP; omitting the explicit `Host` header makes virtual
+hosts answer 421.
+
+Two things pinning does not cover: it uses a single validated address, so there
+is no failover across a site's A records, and proxied requests are passed through
+unpinned because the proxy resolves names itself.
 
 The tool must not gain the ability to bypass CAPTCHAs, authentication,
 paywalls, bot protection or access controls. It only extracts from publicly
