@@ -23,6 +23,7 @@ Safety
 - Obfuscated hosts such as `http://2130706433/` are decoded and rejected
 - Per-IP rate limiting with `Retry-After`
 - Redirect limit of 5, 5 MB response cap, 12s read timeout
+- Charset detected from the body when the server declares none, so UTF-8 pages are not mangled
 - Port allowlist, http/https only, no embedded credentials
 - Short-lived result cache
 
@@ -53,7 +54,7 @@ pip install -r requirements.txt
 python -m pytest
 ```
 
-84 tests cover URL validation and SSRF handling, redirect behaviour, extraction rules, rate limiting and caching, and the HTTP API. They use stub sessions and fixtures, so no test touches the network.
+86 tests cover URL validation and SSRF handling, redirect behaviour, charset handling, extraction rules, rate limiting and caching, and the HTTP API. They use stub sessions and fixtures, so no test touches the network.
 
 ## API
 
@@ -88,6 +89,7 @@ Set `SCRAPELY_TRUST_PROXY=1` only when a proxy you control sets that header. Oth
 ## Project layout
 
 ```
+AGENTS.md                        Working agreements for coding agents
 index.html, app.js, styles.css   Frontend
 backend/main.py                  FastAPI app, routes, configuration
 backend/safety.py                URL validation and SSRF protection
@@ -98,6 +100,12 @@ backend/tests/                   pytest suite
 ```
 
 `extractor.py` has no network or framework dependency, so extraction rules can be tested directly against HTML fixtures.
+
+`AGENTS.md` records the commit-per-change rule and the review checklist to run before committing.
+
+### Known limitation
+
+DNS is resolved during URL validation and resolved again by the HTTP client when it connects. A hostname with a very short TTL could rebind to a private address in between. Closing that requires pinning the resolved IP and setting the `Host` header on the connection; it has not been done here. The existing checks still block the straightforward cases: bad scheme, disallowed port, embedded credentials, any private answer in DNS, and a public URL redirecting to a private one.
 
 ## Before running this in public
 
