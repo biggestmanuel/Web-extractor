@@ -121,6 +121,11 @@ Chromium is found.
   to the default on a malformed value rather than raising at import time.
 - Comments should explain *why* a non-obvious decision was made. Do not
   narrate what the code plainly does.
+- Automate everything that can be automated: tests, lint, builds, audits,
+  scans, migration checks, and repeated manual steps; run them and report
+  results. Never automate irreversible or outward-facing actions without my
+  confirmation — merging, deploying, deleting data, force-pushing, spending
+  money, sending messages. Those require explicit approval before they run.
 
 ## Security posture
 
