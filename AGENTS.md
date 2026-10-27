@@ -141,3 +141,10 @@ unpinned because the proxy resolves names itself.
 The tool must not gain the ability to bypass CAPTCHAs, authentication,
 paywalls, bot protection or access controls. It only extracts from publicly
 accessible HTML.
+
+## Public routes are intentionally public
+
+Routes with no accounts by design — such as `/api/extract` — must be
+documented as public in the README and protected with rate limits, input
+limits, and spending caps *instead* of auth. Never add auth to them without
+asking.
